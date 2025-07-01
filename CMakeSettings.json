@@ -1,0 +1,104 @@
+{
+  "configurations": [
+    {
+      "name": "x64-Debug",
+      "generator": "Visual Studio 17 2022",
+      "configurationType": "Debug",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "Debug"
+        }
+      ],
+      "intelliSenseMode": "windows-msvc-x64",
+      "enableClangTidyCodeAnalysis": false,
+      "enableMicrosoftCodeAnalysis": true
+    },
+    {
+      "name": "x64-Release",
+      "generator": "Visual Studio 17 2022",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "variables": [
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "Release"
+        }
+      ],
+      "intelliSenseMode": "windows-msvc-x64",
+      "enableClangTidyCodeAnalysis": false,
+      "enableMicrosoftCodeAnalysis": false
+    },
+    {
+      "name": "x86-Debug",
+      "generator": "Visual Studio 17 2022",
+      "configurationType": "Debug",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x86" ],
+      "variables": [
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "Debug"
+        }
+      ],
+      "intelliSenseMode": "windows-msvc-x86",
+      "enableClangTidyCodeAnalysis": false,
+      "enableMicrosoftCodeAnalysis": true
+    },
+    {
+      "name": "x86-Release",
+      "generator": "Visual Studio 17 2022",
+      "configurationType": "Release",
+      "buildRoot": "${projectDir}\\build\\${name}",
+      "installRoot": "${projectDir}\\install\\${name}",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "msvc_x86" ],
+      "variables": [
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "Release"
+        }
+      ],
+      "intelliSenseMode": "windows-msvc-x86",
+      "enableClangTidyCodeAnalysis": false,
+      "enableMicrosoftCodeAnalysis": false
+    },
+    {
+      "name": "WSL-GCC-Debug",
+      "generator": "Unix Makefiles",
+      "configurationType": "Debug",
+      "buildRoot": "${projectDir}\\build\\WSL-GCC-Debug",
+      "installRoot": "${projectDir}\\install\\WSL-GCC-Debug",
+      "cmakeExecutable": "/usr/bin/cmake",
+      "cmakeCommandArgs": "",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": "",
+      "inheritEnvironments": [ "linux_x64" ],
+      "wslPath": "${defaultWSLPath}",
+      "variables": [
+        {
+          "name": "CMAKE_BUILD_TYPE",
+          "value": "Debug"
+        }
+      ],
+      "intelliSenseMode": "linux-gcc-x64"
+    }
+  ]
+}

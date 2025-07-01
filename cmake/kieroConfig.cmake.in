@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find MinHook dependency
+find_dependency(minhook REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/kieroTargets.cmake")
+
+check_required_components(kiero)

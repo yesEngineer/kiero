@@ -13,8 +13,6 @@
 ### Requirement
 [Windows SDK](https://www.microsoft.com/en-us/download/details.aspx?id=8279) (For D3D9/D3D10/D3D11/OpenGL hook)
 
-[DirectX SDK](https://www.microsoft.com/en-us/download/details.aspx?id=4064) (For D3D9/D3D10/D3D11 hook)
-
 [Vulkan SDK](https://www.lunarg.com/vulkan-sdk) (For Vulkan hook)
 
 [MinHook](https://github.com/TsudaKageyu/minhook) (For kiero::bind function)
