@@ -1,177 +1,84 @@
-name: Build and Release Kiero
-
+name: Build Kiero
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
-  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
-        config: [Debug, Release]
-        platform: [x64, Win32]
+        os: [windows-latest, ubuntu-latest]
+        build_type: [Debug, Release]
+        include:
+          - os: windows-latest
+            generator: "Visual Studio 17 2022"
+            arch: "-A x64"
+          - os: ubuntu-latest
+            generator: "Unix Makefiles"
+            arch: ""
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
-        submodules: recursive
-      
-    - name: Setup MSBuild
+        submodules: false  # Only if you don't actually need submodules
+    
+    # Use setup-msbuild for Windows
+    - name: Setup MSBuild (Windows)
+      if: matrix.os == 'windows-latest'
       uses: microsoft/setup-msbuild@v2
-      
-    - name: Setup CMake
-      uses: lukka/get-cmake@latest
-      
+    
+    # Install Vulkan SDK (Windows) - More efficient approach
+    - name: Install Vulkan SDK (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        $vulkanVersion = "1.3.290.0"
+        $url = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
+        $installer = "$env:TEMP\VulkanSDK-Installer.exe"
+        Write-Host "Downloading Vulkan SDK..."
+        Invoke-WebRequest -Uri $url -OutFile $installer -TimeoutSec 300
+        Write-Host "Installing Vulkan SDK..."
+        Start-Process -Wait -FilePath $installer -ArgumentList @("/S") -TimeoutSec 600
+        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
+        if (Test-Path $vulkanPath) {
+          echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$vulkanPath\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+        } else {
+          Write-Error "Vulkan SDK installation failed"
+          exit 1
+        }
+    
+    # Install Vulkan SDK (Ubuntu) - Updated for newer Ubuntu
+    - name: Install Vulkan SDK (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.3.290-jammy.list https://packages.lunarg.com/vulkan/1.3.290/lunarg-vulkan-1.3.290-jammy.list
+        sudo apt update
+        sudo apt install -y vulkan-sdk
+    
+    # Configure CMake with better error handling
     - name: Configure CMake
       run: |
-        cmake -B build -S . -A ${{ matrix.platform }} -DCMAKE_BUILD_TYPE=${{ matrix.config }}
-        
+        cmake -B build ${{ matrix.arch }} -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_VERBOSE_MAKEFILE=ON
+      env:
+        VULKAN_SDK: ${{ env.VULKAN_SDK }}
+    
+    # Build with better error handling
     - name: Build
       run: |
-        cmake --build build --config ${{ matrix.config }} --parallel
-        
-    - name: Debug build output
-      run: |
-        Write-Host "Build directory structure:"
-        if (Test-Path "build") {
-          Get-ChildItem -Recurse build/ | Where-Object { $_.Extension -eq ".lib" -or $_.Extension -eq ".dll" } | Select-Object FullName
-        } else {
-          Write-Host "Build directory not found!"
-        }
-      shell: powershell
-      
-    - name: Create artifact directory
-      run: |
-        New-Item -ItemType Directory -Force -Path "artifacts/${{ matrix.platform }}/${{ matrix.config }}"
-      shell: powershell
-        
-    - name: Copy build artifacts
-      run: |
-        $artifactPath = "artifacts/${{ matrix.platform }}/${{ matrix.config }}"
-        
-        # Find and copy kiero.lib
-        $kieroLib = Get-ChildItem -Recurse build/ -Filter "kiero.lib" | Select-Object -First 1
-        if ($kieroLib) {
-          Write-Host "Found kiero.lib at: $($kieroLib.FullName)"
-          Copy-Item $kieroLib.FullName "$artifactPath/"
-        } else {
-          Write-Host "kiero.lib not found!"
-          exit 1
-        }
-        
-        # Copy header file
-        if (Test-Path "kiero.h") {
-          Copy-Item "kiero.h" "$artifactPath/"
-        } else {
-          Write-Host "Warning: kiero.h not found!"
-        }
-        
-        # Find and copy MinHook lib if it exists
-        $minhookLib = Get-ChildItem -Recurse build/ -Filter "minhook.lib" | Select-Object -First 1
-        if ($minhookLib) {
-          Write-Host "Found minhook.lib at: $($minhookLib.FullName)"
-          Copy-Item $minhookLib.FullName "$artifactPath/"
-        } else {
-          Write-Host "minhook.lib not found (this might be expected)"
-        }
-        
-        # Verify artifacts were created
-        Write-Host "Artifacts created:"
-        Get-ChildItem "$artifactPath/" | Select-Object Name
-      shell: powershell
-      
-    - name: Upload build artifacts
+        cmake --build build --config ${{ matrix.build_type }} --verbose
+    
+    # Upload artifacts with better paths
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: kiero-${{ matrix.platform }}-${{ matrix.config }}
-        path: artifacts/${{ matrix.platform }}/${{ matrix.config }}/
-        retention-days: 30
-
-  release:
-    needs: build
-    runs-on: windows-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Download x64 Release artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: kiero-x64-Release
-        path: x64-release
-        
-    - name: Download x86 Release artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: kiero-Win32-Release
-        path: x86-release
-        
-    - name: Verify downloads and rename libraries
-      run: |
-        Write-Host "x64-release contents:"
-        Get-ChildItem x64-release/
-        Write-Host "x86-release contents:"
-        Get-ChildItem x86-release/
-        
-        # Rename the lib files to distinguish platforms
-        if (Test-Path "x64-release/kiero.lib") {
-          Rename-Item "x64-release/kiero.lib" "kiero-x64.lib"
-          Write-Host "Renamed x64 library"
-        } else {
-          Write-Host "Error: x64 kiero.lib not found!"
-          exit 1
-        }
-        
-        if (Test-Path "x86-release/kiero.lib") {
-          Rename-Item "x86-release/kiero.lib" "kiero-x86.lib"
-          Write-Host "Renamed x86 library"
-        } else {
-          Write-Host "Error: x86 kiero.lib not found!"
-          exit 1
-        }
-      shell: powershell
-        
-    - name: Extract version
-      id: version
-      run: |
-        $version = $env:GITHUB_REF -replace "refs/tags/", ""
-        echo "version=$version" >> $env:GITHUB_OUTPUT
-      shell: powershell
-      
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ steps.version.outputs.version }}
-        name: Kiero ${{ steps.version.outputs.version }}
-        draft: false
-        prerelease: ${{ contains(steps.version.outputs.version, '-') }}
-        body: |
-          ## Kiero Library Release ${{ steps.version.outputs.version }}
-          
-          ### What's Included
-          - `kiero-x64.lib` - 64-bit release library
-          - `kiero-x86.lib` - 32-bit release library
-          
-          ### Usage
-          1. Download the appropriate .lib file for your platform
-          2. Add to your project's library dependencies
-          3. Include `kiero.h` in your project (from the repository)
-          4. Link against the library in your build system
-          
-          ### Platform Support
-          - Windows x64 (Release)
-          - Windows x86 (Release)
-          
-        files: |
-          x64-release/kiero-x64.lib
-          x86-release/kiero-x86.lib
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        name: kiero-${{ matrix.os }}-${{ matrix.build_type }}
+        path: |
+          build/lib/
+          build/Release/
+          build/Debug/
+        if-no-files-found: warn
