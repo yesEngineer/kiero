@@ -14,6 +14,10 @@
         {
           "name": "CMAKE_BUILD_TYPE",
           "value": "Debug"
+        },
+        {
+          "name": "VULKAN_SDK",
+          "value": "$env{VULKAN_SDK}"
         }
       ],
       "intelliSenseMode": "windows-msvc-x64",
@@ -34,6 +38,10 @@
         {
           "name": "CMAKE_BUILD_TYPE",
           "value": "Release"
+        },
+        {
+          "name": "VULKAN_SDK",
+          "value": "$env{VULKAN_SDK}"
         }
       ],
       "intelliSenseMode": "windows-msvc-x64",
@@ -54,6 +62,10 @@
         {
           "name": "CMAKE_BUILD_TYPE",
           "value": "Debug"
+        },
+        {
+          "name": "VULKAN_SDK",
+          "value": "$env{VULKAN_SDK}"
         }
       ],
       "intelliSenseMode": "windows-msvc-x86",
@@ -74,6 +86,10 @@
         {
           "name": "CMAKE_BUILD_TYPE",
           "value": "Release"
+        },
+        {
+          "name": "VULKAN_SDK",
+          "value": "$env{VULKAN_SDK}"
         }
       ],
       "intelliSenseMode": "windows-msvc-x86",

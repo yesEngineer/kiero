@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Include FetchContent module
 include(FetchContent)
 
+# Find Vulkan package
+find_package(Vulkan REQUIRED)
+
 # Fetch MinHook
 FetchContent_Declare(
     minhook
@@ -37,8 +40,14 @@ target_include_directories(kiero PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# Add Vulkan include directories
+target_include_directories(kiero PRIVATE ${Vulkan_INCLUDE_DIRS})
+
 # Link libraries
 target_link_libraries(kiero PUBLIC minhook)
+
+# Link Vulkan libraries
+target_link_libraries(kiero PUBLIC ${Vulkan_LIBRARIES})
 
 # Windows-specific libraries
 if(WIN32)
