@@ -266,9 +266,23 @@ jobs:
         if-no-files-found: warn
         retention-days: 7
 
-    # Enhanced debug information
-    - name: Debug Information
-      if: always()
+    # Enhanced debug information (Windows)
+    - name: Debug Information (Windows)
+      if: always() && matrix.os == 'windows-latest'
+      run: |
+        echo "=== Debug Information ==="
+        echo "Matrix OS: ${{ matrix.os }}"
+        echo "Matrix Build Type: ${{ matrix.build_type }}"
+        echo "Runner OS: ${{ runner.os }}"
+        echo "Working Directory: $(Get-Location)"
+        echo ""
+        echo "=== Directory Structure ==="
+        Get-ChildItem -Recurse -Depth 3 2>$null | Where-Object { $_.PSIsContainer -or $_.Extension -in @('.lib', '.dll', '.exe', '.a') } | Format-Table Name, Directory, Length
+      shell: powershell
+
+    # Enhanced debug information (Linux)
+    - name: Debug Information (Linux)
+      if: always() && matrix.os == 'ubuntu-latest'
       run: |
         echo "=== Debug Information ==="
         echo "Matrix OS: ${{ matrix.os }}"
@@ -277,9 +291,5 @@ jobs:
         echo "Working Directory: $(pwd)"
         echo ""
         echo "=== Directory Structure ==="
-        if [ "${{ matrix.os }}" == "windows-latest" ]; then
-          Get-ChildItem -Recurse -Depth 3 2>$null | Where-Object { $_.PSIsContainer -or $_.Extension -in @('.lib', '.dll', '.exe', '.a') } | Format-Table Name, Directory, Length
-        else
-          find . -maxdepth 3 -type f \( -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" \) 2>/dev/null || echo "No build artifacts found"
-        fi
-      shell: ${{ matrix.os == 'windows-latest' && 'powershell' || 'bash' }}
+        find . -maxdepth 3 -type f \( -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" \) 2>/dev/null || echo "No build artifacts found"
+      shell: bash
