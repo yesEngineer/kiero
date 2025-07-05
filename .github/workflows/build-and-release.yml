@@ -34,6 +34,7 @@ jobs:
     # Install Vulkan SDK (Windows) - More robust approach
     - name: Install Vulkan SDK (Windows)
       if: matrix.os == 'windows-latest'
+      shell: pwsh
       run: |
         $vulkanVersion = "1.3.290.0"
         $url = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
@@ -96,6 +97,7 @@ jobs:
     # Install Vulkan SDK (Ubuntu) - More robust
     - name: Install Vulkan SDK (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
+      shell: bash
       run: |
         set -e  # Exit on any error
         
@@ -121,6 +123,7 @@ jobs:
 
     # Configure CMake with better error handling
     - name: Configure CMake
+      shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
       run: |
         echo "Configuring CMake..."
         echo "Build type: ${{ matrix.build_type }}"
@@ -144,6 +147,7 @@ jobs:
 
     # Build with better error handling
     - name: Build
+      shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
       run: |
         echo "Starting build..."
         cmake --build build --config ${{ matrix.build_type }} --verbose
@@ -167,13 +171,26 @@ jobs:
         if-no-files-found: warn
         retention-days: 7  # Keep artifacts for 7 days
 
-    # Debug step - show what was built
-    - name: List build outputs
-      if: always()
+    # Debug step - show what was built (Windows)
+    - name: List build outputs (Windows)
+      if: always() && matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        Write-Host "=== Build directory contents ==="
+        if (Test-Path "build") {
+            Get-ChildItem -Path "build" -Recurse -File | Where-Object { $_.Extension -in @('.lib', '.dll', '.a', '.so') } | Format-Table FullName, Length
+        } else {
+            Write-Host "Build directory not found"
+        }
+
+    # Debug step - show what was built (Ubuntu)
+    - name: List build outputs (Ubuntu)
+      if: always() && matrix.os == 'ubuntu-latest'
+      shell: bash
       run: |
         echo "=== Build directory contents ==="
-        if [ "${{ matrix.os }}" == "windows-latest" ]; then
-          dir build /s
+        if [ -d "build" ]; then
+          find build -type f \( -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" \) 2>/dev/null || echo "No build outputs found"
         else
-          find build -type f -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" 2>/dev/null || echo "No build outputs found"
+          echo "Build directory not found"
         fi
