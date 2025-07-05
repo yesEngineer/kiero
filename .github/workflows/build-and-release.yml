@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45  # Increased timeout
+    timeout-minutes: 60  # Increased overall timeout
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
@@ -31,24 +31,37 @@ jobs:
       if: matrix.os == 'windows-latest'
       uses: microsoft/setup-msbuild@v2
 
-    # Install Vulkan SDK (Windows) - More robust approach
-    - name: Install Vulkan SDK (Windows)
+    # Install Vulkan SDK (Windows) - Improved with caching
+    - name: Cache Vulkan SDK (Windows)
       if: matrix.os == 'windows-latest'
+      uses: actions/cache@v4
+      id: vulkan-cache
+      with:
+        path: C:\VulkanSDK
+        key: vulkan-sdk-1.3.290.0-windows
+
+    - name: Install Vulkan SDK (Windows)
+      if: matrix.os == 'windows-latest' && steps.vulkan-cache.outputs.cache-hit != 'true'
       run: |
         $vulkanVersion = "1.3.290.0"
         $url = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
         $installer = "$env:TEMP\VulkanSDK-Installer.exe"
         
-        # Try downloading with retries
-        $maxRetries = 3
+        # Enhanced download with better retry logic
+        $maxRetries = 5
         $retryCount = 0
         $downloadSuccess = $false
         
         while ($retryCount -lt $maxRetries -and -not $downloadSuccess) {
             try {
                 Write-Host "Downloading Vulkan SDK (attempt $($retryCount + 1)/$maxRetries)..."
-                $progressPreference = 'SilentlyContinue'  # Disable progress bar for faster download
-                Invoke-WebRequest -Uri $url -OutFile $installer -TimeoutSec 600 -MaximumRetryCount 2
+                $progressPreference = 'SilentlyContinue'
+                
+                # Use System.Net.WebClient for better control
+                $webClient = New-Object System.Net.WebClient
+                $webClient.Timeout = 900000  # 15 minutes
+                $webClient.DownloadFile($url, $installer)
+                
                 $downloadSuccess = $true
                 Write-Host "Download completed successfully"
             }
@@ -56,8 +69,9 @@ jobs:
                 Write-Host "Download failed: $($_.Exception.Message)"
                 $retryCount++
                 if ($retryCount -lt $maxRetries) {
-                    Write-Host "Retrying in 10 seconds..."
-                    Start-Sleep -Seconds 10
+                    $waitTime = [math]::Min(30, 5 * $retryCount)  # Progressive backoff
+                    Write-Host "Retrying in $waitTime seconds..."
+                    Start-Sleep -Seconds $waitTime
                 }
             }
         }
@@ -67,10 +81,37 @@ jobs:
             exit 1
         }
         
-        # Install with longer timeout
+        # Verify download
+        if (-not (Test-Path $installer)) {
+            Write-Error "Installer file not found after download"
+            exit 1
+        }
+        
+        $fileSize = (Get-Item $installer).Length
+        Write-Host "Downloaded installer size: $([math]::Round($fileSize / 1MB, 2)) MB"
+        
+        # Install with process monitoring
         Write-Host "Installing Vulkan SDK..."
         try {
-            $process = Start-Process -FilePath $installer -ArgumentList @("/S") -PassThru -Wait
+            $process = Start-Process -FilePath $installer -ArgumentList @("/S") -PassThru
+            
+            # Monitor process with timeout
+            $timeout = 600  # 10 minutes
+            $timer = 0
+            while (-not $process.HasExited -and $timer -lt $timeout) {
+                Start-Sleep -Seconds 5
+                $timer += 5
+                if ($timer % 30 -eq 0) {
+                    Write-Host "Installation still in progress... ($timer seconds elapsed)"
+                }
+            }
+            
+            if (-not $process.HasExited) {
+                Write-Error "Installation timed out after $timeout seconds"
+                $process.Kill()
+                exit 1
+            }
+            
             if ($process.ExitCode -ne 0) {
                 Write-Error "Vulkan SDK installation failed with exit code: $($process.ExitCode)"
                 exit 1
@@ -85,30 +126,53 @@ jobs:
         $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
         if (Test-Path $vulkanPath) {
             Write-Host "Vulkan SDK installed successfully at: $vulkanPath"
-            echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "$vulkanPath\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
         } else {
             Write-Error "Vulkan SDK installation verification failed - path not found: $vulkanPath"
             exit 1
         }
-      timeout-minutes: 15  # Specific timeout for this step
+      timeout-minutes: 25  # Increased timeout for this step
 
-    # Install Vulkan SDK (Ubuntu) - More robust
+    # Set Vulkan environment variables (Windows)
+    - name: Set Vulkan Environment (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        $vulkanVersion = "1.3.290.0"
+        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
+        echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+        echo "$vulkanPath\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+        Write-Host "VULKAN_SDK set to: $vulkanPath"
+
+    # Install Vulkan SDK (Ubuntu) - Improved with alternatives
     - name: Install Vulkan SDK (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        set -e  # Exit on any error
+        set -e
         
-        # Add Vulkan repository
-        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
-        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.3.290-jammy.list \
-          https://packages.lunarg.com/vulkan/1.3.290/lunarg-vulkan-1.3.290-jammy.list
+        # Try official Vulkan SDK first
+        echo "Attempting to install official Vulkan SDK..."
+        if ! wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc; then
+            echo "Failed to add Vulkan signing key, trying alternative..."
+        fi
         
-        # Update package lists with retry
-        sudo apt update --fix-missing || sudo apt update
+        if ! sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.3.290-jammy.list \
+          https://packages.lunarg.com/vulkan/1.3.290/lunarg-vulkan-1.3.290-jammy.list; then
+            echo "Failed to add Vulkan repository, trying alternative..."
+        fi
         
-        # Install Vulkan SDK
-        sudo apt install -y vulkan-sdk
+        # Update with retries
+        for i in {1..3}; do
+            if sudo apt update --fix-missing; then
+                break
+            fi
+            echo "Apt update failed, attempt $i/3"
+            sleep 5
+        done
+        
+        # Try to install Vulkan SDK, fallback to system packages if needed
+        if ! sudo apt install -y vulkan-sdk; then
+            echo "Official Vulkan SDK installation failed, trying system packages..."
+            sudo apt install -y libvulkan-dev vulkan-tools || echo "Warning: Some Vulkan packages failed to install"
+        fi
         
         # Verify installation
         if command -v vulkaninfo &> /dev/null; then
@@ -117,43 +181,78 @@ jobs:
         else
             echo "Warning: vulkaninfo not found, but continuing..."
         fi
-      timeout-minutes: 10
+      timeout-minutes: 15
 
-    # Configure CMake with better error handling
+    # Configure CMake with enhanced error handling
     - name: Configure CMake
       run: |
-        echo "Configuring CMake..."
+        echo "=== CMake Configuration ==="
         echo "Build type: ${{ matrix.build_type }}"
         echo "Generator: ${{ matrix.generator }}"
         echo "Architecture: ${{ matrix.arch }}"
+        echo "Working directory: $(pwd)"
         
         # Show Vulkan SDK path for debugging
         if [ "${{ matrix.os }}" == "windows-latest" ]; then
           echo "VULKAN_SDK: $env:VULKAN_SDK"
+          if (Test-Path "$env:VULKAN_SDK") {
+            echo "Vulkan SDK directory exists"
+            Get-ChildItem "$env:VULKAN_SDK" | Select-Object Name, LastWriteTime
+          } else {
+            echo "Warning: VULKAN_SDK path does not exist"
+          }
         else
-          echo "VULKAN_SDK: $VULKAN_SDK"
+          echo "VULKAN_SDK: ${VULKAN_SDK:-not set}"
+          if [ -d "/usr/include/vulkan" ]; then
+            echo "System Vulkan headers found"
+          fi
         fi
         
+        # Create build directory if it doesn't exist
+        mkdir -p build
+        
+        # Configure with verbose output
         cmake -B build ${{ matrix.arch }} \
           -G "${{ matrix.generator }}" \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          -DCMAKE_VERBOSE_MAKEFILE=ON
+          -DCMAKE_VERBOSE_MAKEFILE=ON \
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        
+        echo "CMake configuration completed"
       env:
         VULKAN_SDK: ${{ env.VULKAN_SDK }}
-      timeout-minutes: 5
+      timeout-minutes: 10
 
-    # Build with better error handling
+    # Build with enhanced monitoring
     - name: Build
       run: |
-        echo "Starting build..."
-        cmake --build build --config ${{ matrix.build_type }} --verbose
-        echo "Build completed"
-      timeout-minutes: 15
+        echo "=== Starting Build ==="
+        echo "Build configuration: ${{ matrix.build_type }}"
+        echo "Parallel jobs: $(nproc 2>/dev/null || echo 'unknown')"
+        
+        # Build with parallel jobs where possible
+        cmake --build build --config ${{ matrix.build_type }} --verbose --parallel
+        
+        echo "=== Build Completed ==="
+      timeout-minutes: 20
+
+    # Verify build outputs
+    - name: Verify Build Outputs
+      if: always()
+      run: |
+        echo "=== Build Verification ==="
+        if [ -d "build" ]; then
+          echo "Build directory exists"
+          find build -type f \( -name "*.lib" -o -name "*.a" -o -name "*.so" -o -name "*.dll" \) -ls 2>/dev/null || echo "No library files found"
+        else
+          echo "Build directory not found"
+        fi
+      shell: bash
 
     # Upload artifacts with better organization
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
-      if: always()  # Upload even if build fails (for debugging)
+      if: always()
       with:
         name: kiero-${{ matrix.os }}-${{ matrix.build_type }}
         path: |
@@ -165,24 +264,22 @@ jobs:
           build/*.so
           build/*.dll
         if-no-files-found: warn
-        retention-days: 7  # Keep artifacts for 7 days
+        retention-days: 7
 
-    # Debug step - show what was built (Windows)
-    - name: List build outputs (Windows)
-      if: always() && matrix.os == 'windows-latest'
+    # Enhanced debug information
+    - name: Debug Information
+      if: always()
       run: |
-        echo "=== Build directory contents ==="
-        if (Test-Path "build") {
-          Get-ChildItem -Path "build" -Recurse | Where-Object { $_.Extension -in @('.lib', '.dll', '.exe', '.a') } | Format-Table Name, Directory, Length
-        } else {
-          echo "Build directory not found"
-        }
-      shell: powershell
-
-    # Debug step - show what was built (Linux)
-    - name: List build outputs (Linux)
-      if: always() && matrix.os == 'ubuntu-latest'
-      run: |
-        echo "=== Build directory contents ==="
-        find build -type f -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" 2>/dev/null || echo "No build outputs found"
-      shell: bash
+        echo "=== Debug Information ==="
+        echo "Matrix OS: ${{ matrix.os }}"
+        echo "Matrix Build Type: ${{ matrix.build_type }}"
+        echo "Runner OS: ${{ runner.os }}"
+        echo "Working Directory: $(pwd)"
+        echo ""
+        echo "=== Directory Structure ==="
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          Get-ChildItem -Recurse -Depth 3 2>$null | Where-Object { $_.PSIsContainer -or $_.Extension -in @('.lib', '.dll', '.exe', '.a') } | Format-Table Name, Directory, Length
+        else
+          find . -maxdepth 3 -type f \( -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" \) 2>/dev/null || echo "No build artifacts found"
+        fi
+      shell: ${{ matrix.os == 'windows-latest' && 'powershell' || 'bash' }}
