@@ -19,6 +19,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
       
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
@@ -34,30 +36,54 @@ jobs:
       run: |
         cmake --build build --config ${{ matrix.config }} --parallel
         
+    - name: Debug build output
+      run: |
+        Write-Host "Build directory structure:"
+        if (Test-Path "build") {
+          Get-ChildItem -Recurse build/ | Where-Object { $_.Extension -eq ".lib" -or $_.Extension -eq ".dll" } | Select-Object FullName
+        } else {
+          Write-Host "Build directory not found!"
+        }
+      shell: powershell
+      
     - name: Create artifact directory
       run: |
-        mkdir -p artifacts/${{ matrix.platform }}/${{ matrix.config }}
+        New-Item -ItemType Directory -Force -Path "artifacts/${{ matrix.platform }}/${{ matrix.config }}"
+      shell: powershell
         
     - name: Copy build artifacts
       run: |
-        # Copy static library
-        if (Test-Path "build/${{ matrix.config }}/kiero.lib") {
-          Copy-Item "build/${{ matrix.config }}/kiero.lib" "artifacts/${{ matrix.platform }}/${{ matrix.config }}/"
-        }
-        if (Test-Path "build/lib/${{ matrix.config }}/kiero.lib") {
-          Copy-Item "build/lib/${{ matrix.config }}/kiero.lib" "artifacts/${{ matrix.platform }}/${{ matrix.config }}/"
+        $artifactPath = "artifacts/${{ matrix.platform }}/${{ matrix.config }}"
+        
+        # Find and copy kiero.lib
+        $kieroLib = Get-ChildItem -Recurse build/ -Filter "kiero.lib" | Select-Object -First 1
+        if ($kieroLib) {
+          Write-Host "Found kiero.lib at: $($kieroLib.FullName)"
+          Copy-Item $kieroLib.FullName "$artifactPath/"
+        } else {
+          Write-Host "kiero.lib not found!"
+          exit 1
         }
         
-        # Copy header
-        Copy-Item "kiero.h" "artifacts/${{ matrix.platform }}/${{ matrix.config }}/"
+        # Copy header file
+        if (Test-Path "kiero.h") {
+          Copy-Item "kiero.h" "$artifactPath/"
+        } else {
+          Write-Host "Warning: kiero.h not found!"
+        }
         
-        # Copy MinHook lib (if exists)
-        if (Test-Path "build/_deps/minhook-build/${{ matrix.config }}/minhook.lib") {
-          Copy-Item "build/_deps/minhook-build/${{ matrix.config }}/minhook.lib" "artifacts/${{ matrix.platform }}/${{ matrix.config }}/"
+        # Find and copy MinHook lib if it exists
+        $minhookLib = Get-ChildItem -Recurse build/ -Filter "minhook.lib" | Select-Object -First 1
+        if ($minhookLib) {
+          Write-Host "Found minhook.lib at: $($minhookLib.FullName)"
+          Copy-Item $minhookLib.FullName "$artifactPath/"
+        } else {
+          Write-Host "minhook.lib not found (this might be expected)"
         }
-        if (Test-Path "build/_deps/minhook-build/lib/${{ matrix.config }}/minhook.lib") {
-          Copy-Item "build/_deps/minhook-build/lib/${{ matrix.config }}/minhook.lib" "artifacts/${{ matrix.platform }}/${{ matrix.config }}/"
-        }
+        
+        # Verify artifacts were created
+        Write-Host "Artifacts created:"
+        Get-ChildItem "$artifactPath/" | Select-Object Name
       shell: powershell
       
     - name: Upload build artifacts
@@ -88,14 +114,28 @@ jobs:
         name: kiero-Win32-Release
         path: x86-release
         
-    - name: Rename libraries
+    - name: Verify downloads and rename libraries
       run: |
+        Write-Host "x64-release contents:"
+        Get-ChildItem x64-release/
+        Write-Host "x86-release contents:"
+        Get-ChildItem x86-release/
+        
         # Rename the lib files to distinguish platforms
         if (Test-Path "x64-release/kiero.lib") {
           Rename-Item "x64-release/kiero.lib" "kiero-x64.lib"
+          Write-Host "Renamed x64 library"
+        } else {
+          Write-Host "Error: x64 kiero.lib not found!"
+          exit 1
         }
+        
         if (Test-Path "x86-release/kiero.lib") {
           Rename-Item "x86-release/kiero.lib" "kiero-x86.lib"
+          Write-Host "Renamed x86 library"
+        } else {
+          Write-Host "Error: x86 kiero.lib not found!"
+          exit 1
         }
       shell: powershell
         
