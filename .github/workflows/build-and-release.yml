@@ -24,223 +24,206 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        submodules: false
+        submodules: true
 
-    # Use setup-msbuild for Windows
     - name: Setup MSBuild (Windows)
       if: matrix.os == 'windows-latest'
       uses: microsoft/setup-msbuild@v2
 
-    # Install Vulkan SDK (Windows) - Fixed PowerShell script
-    - name: Cache Vulkan SDK (Windows)
-      if: matrix.os == 'windows-latest'
-      uses: actions/cache@v4
-      id: vulkan-cache
-      with:
-        path: C:\VulkanSDK
-        key: vulkan-sdk-1.3.290.0-windows
-
     - name: Install Vulkan SDK (Windows)
-      if: matrix.os == 'windows-latest' && steps.vulkan-cache.outputs.cache-hit != 'true'
-      run: |
-        $vulkanVersion = "1.3.290.0"
-        $url = "https://sdk.lunarg.com/sdk/download/$vulkanVersion/windows/VulkanSDK-$vulkanVersion-Installer.exe"
-        $installer = "$env:TEMP\VulkanSDK-Installer.exe"
-        
-        # Enhanced download with proper error handling
-        $maxRetries = 3
-        $retryCount = 0
-        $downloadSuccess = $false
-        
-        while ($retryCount -lt $maxRetries -and -not $downloadSuccess) {
-            try {
-                Write-Host "Downloading Vulkan SDK (attempt $($retryCount + 1)/$maxRetries)..."
-                
-                # Use Invoke-WebRequest instead of WebClient for better PowerShell compatibility
-                $ProgressPreference = 'SilentlyContinue'
-                Invoke-WebRequest -Uri $url -OutFile $installer -TimeoutSec 900
-                
-                $downloadSuccess = $true
-                Write-Host "Download completed successfully"
-            }
-            catch {
-                Write-Host "Download failed: $($_.Exception.Message)"
-                $retryCount++
-                if ($retryCount -lt $maxRetries) {
-                    $waitTime = 10 * $retryCount
-                    Write-Host "Retrying in $waitTime seconds..."
-                    Start-Sleep -Seconds $waitTime
-                }
-            }
-        }
-        
-        if (-not $downloadSuccess) {
-            Write-Error "Failed to download Vulkan SDK after $maxRetries attempts"
-            exit 1
-        }
-        
-        # Verify download
-        if (-not (Test-Path $installer)) {
-            Write-Error "Installer file not found after download"
-            exit 1
-        }
-        
-        $fileSize = (Get-Item $installer).Length
-        Write-Host "Downloaded installer size: $([math]::Round($fileSize / 1MB, 2)) MB"
-        
-        # Install with process monitoring
-        Write-Host "Installing Vulkan SDK..."
-        try {
-            $processArgs = @{
-                FilePath = $installer
-                ArgumentList = @("/S")
-                Wait = $true
-                PassThru = $true
-            }
-            
-            $process = Start-Process @processArgs
-            
-            if ($process.ExitCode -ne 0) {
-                Write-Error "Vulkan SDK installation failed with exit code: $($process.ExitCode)"
-                exit 1
-            }
-        }
-        catch {
-            Write-Error "Vulkan SDK installation failed: $($_.Exception.Message)"
-            exit 1
-        }
-        
-        # Verify installation
-        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
-        if (Test-Path $vulkanPath) {
-            Write-Host "Vulkan SDK installed successfully at: $vulkanPath"
-        } else {
-            Write-Error "Vulkan SDK installation verification failed - path not found: $vulkanPath"
-            exit 1
-        }
-      timeout-minutes: 20
-
-    # Set Vulkan environment variables (Windows)
-    - name: Set Vulkan Environment (Windows)
       if: matrix.os == 'windows-latest'
       run: |
-        $vulkanVersion = "1.3.290.0"
-        $vulkanPath = "C:\VulkanSDK\$vulkanVersion"
-        echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-        echo "$vulkanPath\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-        Write-Host "VULKAN_SDK set to: $vulkanPath"
+        Write-Host "Installing Vulkan SDK via Chocolatey..."
+        choco install vulkan-sdk -y --no-progress
+        
+        $vulkanBase = "C:\VulkanSDK"
+        if (Test-Path $vulkanBase) {
+            $installedVersion = Get-ChildItem $vulkanBase | Select-Object -First 1 -ExpandProperty Name
+            $vulkanPath = "$vulkanBase\$installedVersion"
+            
+            Write-Host "Vulkan SDK installed at: $vulkanPath"
+            
+            echo "VULKAN_SDK=$vulkanPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+            echo "$vulkanPath\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+            
+            $env:VULKAN_SDK = $vulkanPath
+            $env:PATH = "$vulkanPath\Bin;$env:PATH"
+            
+            Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
+            
+            if (Test-Path "$vulkanPath\Include\vulkan") {
+                Write-Host "Vulkan headers found"
+            }
+            if (Test-Path "$vulkanPath\Lib") {
+                Write-Host "Vulkan libraries found"
+                Get-ChildItem "$vulkanPath\Lib" -Filter "*.lib" | Select-Object -First 5
+            }
+        } else {
+            Write-Error "Vulkan SDK installation failed - directory not found"
+            exit 1
+        }
+      shell: pwsh
+      timeout-minutes: 10
 
-    # Install Vulkan SDK (Ubuntu) - Simplified and more reliable
     - name: Install Vulkan SDK (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
       run: |
-        set -e
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo apt-key add -
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
         
-        # Update package lists
         sudo apt update
+        sudo apt install -y vulkan-sdk build-essential cmake
         
-        # Install system Vulkan packages (more reliable than LunarG packages)
-        sudo apt install -y libvulkan-dev vulkan-tools
-        
-        # Verify installation
-        if command -v vulkaninfo &> /dev/null; then
-            echo "Vulkan SDK installed successfully"
-            vulkaninfo --summary || echo "Vulkan info summary failed, but SDK is installed"
-        else
-            echo "Warning: vulkaninfo not found, but continuing..."
-        fi
+        echo "Vulkan SDK installed"
+        which glslc || echo "glslc not found"
+        pkg-config --modversion vulkan || echo "Vulkan pkg-config not found"
       timeout-minutes: 10
 
-    # Configure CMake with enhanced error handling
     - name: Configure CMake
       run: |
         echo "=== CMake Configuration ==="
         echo "Build type: ${{ matrix.build_type }}"
         echo "Generator: ${{ matrix.generator }}"
         echo "Architecture: ${{ matrix.arch }}"
-        echo "Working directory: $(pwd)"
         
-        # Show Vulkan SDK path for debugging
         if [ "${{ matrix.os }}" == "windows-latest" ]; then
           echo "VULKAN_SDK: $env:VULKAN_SDK"
-          if (Test-Path "$env:VULKAN_SDK") {
-            echo "Vulkan SDK directory exists"
-          } else {
-            echo "Warning: VULKAN_SDK path does not exist"
-          }
         else
           echo "VULKAN_SDK: ${VULKAN_SDK:-not set}"
-          if [ -d "/usr/include/vulkan" ]; then
-            echo "System Vulkan headers found"
-          fi
         fi
         
-        # Create build directory
         mkdir -p build
         
-        # Configure with verbose output
         cmake -B build ${{ matrix.arch }} \
           -G "${{ matrix.generator }}" \
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
-          -DCMAKE_VERBOSE_MAKEFILE=ON \
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          -DCMAKE_VERBOSE_MAKEFILE=ON
         
         echo "CMake configuration completed"
       shell: bash
       timeout-minutes: 10
 
-    # Build with enhanced monitoring
-    - name: Build
+    - name: Build Kiero Library
       run: |
-        echo "=== Starting Build ==="
-        echo "Build configuration: ${{ matrix.build_type }}"
-        
-        # Build with parallel jobs where possible
-        cmake --build build --config ${{ matrix.build_type }} --verbose --parallel
-        
+        echo "=== Building Kiero Library ==="
+        cmake --build build --config ${{ matrix.build_type }} --parallel
         echo "=== Build Completed ==="
       timeout-minutes: 20
 
-    # Verify build outputs
-    - name: Verify Build Outputs
+    - name: Find Built Libraries
       if: always()
       run: |
-        echo "=== Build Verification ==="
-        if [ -d "build" ]; then
-          echo "Build directory exists"
-          find build -type f \( -name "*.lib" -o -name "*.a" -o -name "*.so" -o -name "*.dll" \) -ls 2>/dev/null || echo "No library files found"
+        echo "=== Searching for built libraries ==="
+        
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          pwsh -Command "
+            Write-Host 'Searching in build directory...'
+            if (Test-Path 'build') {
+              Get-ChildItem -Path 'build' -Recurse -Include '*.lib','*.dll','*.pdb' | ForEach-Object {
+                Write-Host \"Found: \`$(\$_.FullName) (Size: \`$(\$_.Length) bytes)\"
+              }
+            }
+            
+            @('build/Release', 'build/Debug', 'build/lib', 'build/bin') | ForEach-Object {
+              if (Test-Path \`$_) {
+                Write-Host \"Contents of \`${_}:\"
+                Get-ChildItem -Path \`$_ | Format-Table Name, Length
+              }
+            }
+          "
         else
-          echo "Build directory not found"
+          echo "Searching for libraries..."
+          find build -type f \( -name "*.a" -o -name "*.so" -o -name "*.so.*" \) -exec ls -la {} \; 2>/dev/null || true
+          
+          for dir in build build/lib build/bin; do
+            if [ -d "$dir" ]; then
+              echo "Contents of $dir:"
+              ls -la "$dir" || true
+            fi
+          done
         fi
       shell: bash
 
-    # Upload artifacts with better organization
-    - name: Upload artifacts
+    - name: Upload Windows Artifacts
+      if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
-      if: always()
       with:
-        name: kiero-${{ matrix.os }}-${{ matrix.build_type }}
+        name: kiero-windows-${{ matrix.build_type }}
         path: |
-          build/lib/
-          build/Release/
-          build/Debug/
-          build/*.lib
-          build/*.a
-          build/*.so
-          build/*.dll
+          build/**/*.lib
+          build/**/*.dll
+          build/**/*.pdb
+          build/**/kiero.*
         if-no-files-found: warn
         retention-days: 7
 
-    # Enhanced debug information
-    - name: Debug Information
+    - name: Upload Linux Artifacts
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: kiero-linux-${{ matrix.build_type }}
+        path: |
+          build/**/*.a
+          build/**/*.so
+          build/**/*.so.*
+          build/**/libkiero.*
+          build/**/kiero.*
+        if-no-files-found: warn
+        retention-days: 7
+
+    - name: Create Build Summary
       if: always()
+      run: |
+        echo "## Build Summary for ${{ matrix.os }} - ${{ matrix.build_type }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          pwsh -Command "
+            if (Test-Path 'build') {
+              \$libs = Get-ChildItem -Path 'build' -Recurse -Include '*.lib','*.dll' -ErrorAction SilentlyContinue
+              if (\$libs) {
+                echo '### Built Libraries:' >> \$env:GITHUB_STEP_SUMMARY
+                \$libs | ForEach-Object {
+                  echo \"- \`$(\$_.Name) (Size: \`$([math]::Round(\$_.Length / 1KB, 2)) KB)\" >> \$env:GITHUB_STEP_SUMMARY
+                }
+              } else {
+                echo '### Warning: No libraries found in build directory' >> \$env:GITHUB_STEP_SUMMARY
+              }
+            } else {
+              echo '### Error: Build directory not found' >> \$env:GITHUB_STEP_SUMMARY
+            }
+          "
+        else
+          if [ -d "build" ]; then
+            echo "### Built Libraries:" >> $GITHUB_STEP_SUMMARY
+            find build -type f \( -name "*.a" -o -name "*.so" \) -exec basename {} \; 2>/dev/null | while read -r lib; do
+              echo "- $lib" >> $GITHUB_STEP_SUMMARY
+            done || echo "### Warning: No libraries found" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### Error: Build directory not found" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+      shell: bash
+
+    - name: Debug Information
+      if: failure()
       run: |
         echo "=== Debug Information ==="
         echo "Matrix OS: ${{ matrix.os }}"
         echo "Matrix Build Type: ${{ matrix.build_type }}"
-        echo "Runner OS: ${{ runner.os }}"
-        echo "Working Directory: $(pwd)"
-        echo ""
-        echo "=== Directory Structure ==="
-        find . -maxdepth 3 -type f \( -name "*.a" -o -name "*.so" -o -name "*.lib" -o -name "*.dll" \) 2>/dev/null || echo "No build artifacts found"
+        
+        if [ -f "build/CMakeCache.txt" ]; then
+          echo "=== CMake Cache (relevant lines) ==="
+          grep -E "(VULKAN|CMAKE_BUILD_TYPE|CMAKE_GENERATOR)" build/CMakeCache.txt || true
+        fi
+        
+        if [ -f "build/CMakeFiles/CMakeError.log" ]; then
+          echo "=== CMake Error Log (last 100 lines) ==="
+          tail -n 100 build/CMakeFiles/CMakeError.log
+        fi
+        
+        if [ -f "build/CMakeFiles/CMakeOutput.log" ]; then
+          echo "=== CMake Output Log (last 50 lines) ==="
+          tail -n 50 build/CMakeFiles/CMakeOutput.log
+        fi
       shell: bash
